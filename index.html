@@ -162,19 +162,28 @@ Send me a message to test the interface.</div>
     }
 
     form.addEventListener("submit", function (event) {
-      event.preventDefault();
+      
+const NOVA_BACKEND_URL =
+  "https://nova.jasimsadiqs.workers.dev/";
 
-      const text = input.value.trim();
-      if (!text) return;
+async function askNOVA(message) {
+  const response = await fetch(NOVA_BACKEND_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ message })
+  });
 
-      addMessage(text, "user");
-      input.value = "";
+  const data = await response.json();
 
-      addMessage(
-        "Message received! I'm still in demo mode. " +
-        "My AI brain isn't connected yet. 🔌",
-        "ai"
-      );
+  if (!response.ok) {
+    throw new Error(data.error || "NOVA request failed.");
+  }
+
+  return data.reply;
+}
+
     });
   </script>
 </body>
