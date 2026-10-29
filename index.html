@@ -156,6 +156,20 @@ Send me a message to test the interface.</div>
   const NOVA_BACKEND_URL =
     "https://nova.jasimsadiqs.workers.dev/";
 
+  const CHAT_LIST_KEY = "nova_chat_list";
+  const CURRENT_CHAT_KEY = "nova_current_chat";
+
+  let chatId = "";
+  let history = [];
+  let chatList = [];
+  let busy = false;
+
+  function makeId() {
+    return "chat_" +
+      Date.now().toString(36) + "_" +
+      Math.random().toString(36).slice(2, 12);
+  }
+
   function addMessage(text, type) {
     const bubble = document.createElement("div");
     bubble.className = "message " + type;
@@ -165,13 +179,16 @@ Send me a message to test the interface.</div>
     return bubble;
   }
 
-  async function askNOVA(message) {
+  function saveLocalState() {
+    localStorage.setItem(CHAT_LIST_KEY, JSON.stringify(chatList));
+    localStorage.setItem(CURRENT_CHAT_KEY, chatId);
+  }
+
+  async function backend(payload) {
     const response = await fetch(NOVA_BACKEND_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ message })
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
     });
 
     const data = await response.json();
@@ -180,34 +197,154 @@ Send me a message to test the interface.</div>
       throw new Error(data.error || "NOVA request failed.");
     }
 
-    return data.reply;
+    return data;
+  }
+
+  function renderHistory() {
+    chat.replaceChildren();
+
+    if (!history.length) {
+      addMessage("New conversation started. What's up?", "assistant");
+      return;
+    }
+
+    for (const item of history) {
+      addMessage(
+        item.content,
+        item.role === "user" ? "user" : "assistant"
+      );
+    }
+  }
+
+  async function openChat(id) {
+    chatId = id;
+    history = [];
+    saveLocalState();
+    chat.replaceChildren();
+    addMessage("Loading conversation...", "assistant");
+
+    try {
+      const data = await backend({
+        action: "load",
+        chatId
+      });
+
+      history = Array.isArray(data.history) ? data.history : [];
+      renderHistory();
+    } catch (error) {
+      chat.replaceChildren();
+      addMessage("Could not load chat: " + error.message, "assistant");
+    }
+  }
+
+  async function newChat() {
+    if (busy) return;
+
+    chatId = makeId();
+    history = [];
+
+    chatList.unshift({
+      id: chatId,
+      title: "New Chat",
+      createdAt: Date.now()
+    });
+
+    saveLocalState();
+    renderHistory();
   }
 
   form.addEventListener("submit", async function (event) {
     event.preventDefault();
 
+    if (busy) return;
+
     const message = input.value.trim();
     if (!message) return;
+
+    if (!chatId) {
+      await newChat();
+    }
+
+    busy = true;
+    const sendButton = form.querySelector('button[type="submit"]');
+    if (sendButton) sendButton.disabled = true;
 
     addMessage(message, "user");
     input.value = "";
 
     const loading = addMessage("NOVA is thinking...", "assistant");
-    const sendButton = form.querySelector('button[type="submit"]');
-
-    if (sendButton) sendButton.disabled = true;
 
     try {
-      const reply = await askNOVA(message);
-      loading.textContent = reply || "I received an empty reply. Rude of the server.";
+      const data = await backend({
+        action: "send",
+        chatId,
+        message
+      });
+
+      loading.textContent = data.reply || "Empty reply received.";
+
+      history.push(
+        { role: "user", content: message },
+        { role: "assistant", content: data.reply }
+      );
+
+      // Keep the browser copy aligned with the backend's last 100 messages.
+      history = history.slice(-100);
+
+      const current = chatList.find(item => item.id === chatId);
+      if (current && current.title === "New Chat") {
+        current.title = message.slice(0, 40);
+      }
+
+      saveLocalState();
+
     } catch (error) {
       loading.textContent = "Error: " + error.message;
     } finally {
+      busy = false;
       if (sendButton) sendButton.disabled = false;
       input.focus();
     }
   });
+
+  const newChatButton = document.createElement("button");
+  newChatButton.textContent = "＋ New Chat";
+  newChatButton.type = "button";
+  newChatButton.style.cssText =
+    "position:fixed;top:12px;right:12px;z-index:9999;" +
+    "padding:10px 14px;border-radius:10px;" +
+    "border:1px solid #555;background:#202124;" +
+    "color:white;font-size:14px;";
+
+  newChatButton.addEventListener("click", newChat);
+  document.body.appendChild(newChatButton);
+
+  async function startNOVA() {
+    try {
+      chatList = JSON.parse(
+        localStorage.getItem(CHAT_LIST_KEY) || "[]"
+      );
+
+      if (!Array.isArray(chatList)) chatList = [];
+    } catch {
+      chatList = [];
+    }
+
+    const previousId = localStorage.getItem(CURRENT_CHAT_KEY);
+
+    if (
+      previousId &&
+      chatList.some(item => item.id === previousId)
+    ) {
+      await openChat(previousId);
+    } else {
+      await newChat();
+    }
+  }
+
+  startNOVA();
 </script>
+
 
 </body>
 </html>
